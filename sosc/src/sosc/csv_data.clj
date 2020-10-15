@@ -21,39 +21,13 @@
 (def all-hired-candidates
   (csv-data->maps data))
 
-
 (defn valid-candidates [all-hired-candidates]
-  (letfn [(fields-present? [row] (some nil? (vals row))) ;; Check for any missing fields
+  (letfn [(fields-present? [row] (some nil? (vals row)))
           (job-position [{:keys [position]}] (or (= position 1)
                                                  (= position 2)))]
     (->> all-hired-candidates
-         (remove fields-present?)  ;; Remove rows with missing data
-         (filter job-position))))  ;; Only count sales and customer service positions
-
-
-(def valid-hired-candidates (valid-candidates all-hired-candidates))  ; all valid hired candidates
-
-
-(comment
-  (count all-hired-candidates)
-  (count valid-hired-candidates)
-
-  (defn columnizer [column-index]
-    (let [column
-          (mapv #(nth % column-index) data)
-
-          attribute
-          (keyword (first column))
-
-          values
-          (mapv str->int (rest column))]
-      (assoc {} attribute values)))
-
-  (def xf (map columnizer))
-  (def column-by-attribute
-    (transduce xf conj (range 10))) ; this is a list of maps, each map has a key that corresponds to an attribute and a value that is a list of the values
-)
-
+         (remove fields-present?)
+         (filter job-position))))
 
 (defn criminal-history? [valid-hired-candidates]
   (letfn [(criminal-history? [{:keys [criminal-history]}]
@@ -66,39 +40,41 @@
      (->> valid-hired-candidates
           (remove criminal-history?))}))
 
-(comment
-  (def criminal-histories (criminal-history? valid-hired-candidates))
-  => {:second-chance-candidates
-      ({:ID 1, :longest-job 2, :school 1, :fewest-short-jobs -2, :voluntary-t 0, :LOE 1236, :terminated 0, :misconduct 0, :position 1, :criminal-history 1, :involuntary-t 0} {:ID 4, :longest-job 3, :school 0, :fewest-short-jobs -5, :voluntary-t 0, :LOE 1000, :terminated 1, :misconduct 0, :position 1, :criminal-history 1, :involuntary-t 1} {:ID 14, :longest-job 1, :school 1, :fewest-short-jobs -3, :voluntary-t 0, :LOE 1036, :terminated 0, :misconduct 0, :position 2, :criminal-history 1, :involuntary-t 0} {:ID 19, :longest-job 2, :school 1, :fewest-short-jobs -4, :voluntary-t 0, :LOE 1236, :terminated 0, :misconduct 0, :position 2, :criminal-history 1, :involuntary-t 0}
-       {:ID 24365, :longest-job 2, :school 1, :fewest-short-jobs 1, :voluntary-t 1, :LOE 653, :terminated 1, :misconduct 1, :position 1, :criminal-history 1, :involuntary-t 0}
-       {:ID 26242, :longest-job 1, :school 1, :fewest-short-jobs -5, :voluntary-t 1, :LOE 735, :terminated 1, :misconduct 0, :position 2, :criminal-history 1, :involuntary-t 0})
-
-      :no-criminal-history
-      ({:ID 13, :longest-job 1, :school 0, :fewest-short-jobs -2, :voluntary-t 1, :LOE 89, :terminated 1, :misconduct 0, :position 2, :criminal-history 0, :involuntary-t 0}
-       {:ID 16, :longest-job 3, :school 1, :fewest-short-jobs -4, :voluntary-t 0, :LOE 1936, :terminated 0, :misconduct 0, :position 2, :criminal-history 0, :involuntary-t 0}
-       {:ID 4325, :longest-job 4, :school 1, :fewest-short-jobs -2, :voluntary-t 0, :LOE 234, :terminated 1, :misconduct 0, :position 2, :criminal-history 0, :involuntary-t 1} {:ID 6345, :longest-job 4, :school 1, :fewest-short-jobs -3, :voluntary-t 0, :LOE 543, :terminated 1, :misconduct 1, :position 1, :criminal-history 0, :involuntary-t 1} {:ID 526, :longest-job 6, :school 1, :fewest-short-jobs -1, :voluntary-t 0, :LOE 253, :terminated 1, :misconduct 0, :position 2, :criminal-history 0, :involuntary-t 1})})
-
 (defn average
   [numbers]
   (if (empty? numbers) 0
-    (float (/ (reduce + numbers) (count numbers)))))
+      (float (/ (reduce + numbers) (count numbers)))))
 
 (defn length-of-employment [candidate-pool]
-  (map (fn [{:keys [LOE]}] LOE) candidate-pool))
+  (map :LOE candidate-pool))
 
 (defn compare-LOE [valid-hired-candidates]
-  (let [criminal-histories
+  (let [average-LOE
+        (->> (length-of-employment valid-hired-candidates)
+             (average))
+
+        criminal-histories
         (criminal-history? valid-hired-candidates)
 
-       no-criminal-history-LOE
-       [:all (average (length-of-employment (:no-criminal-history criminal-histories)))]
+        no-criminal-history-LOE
+        (->> (:no-criminal-history criminal-histories)
+             (length-of-employment)
+             (average))
 
-       second-chance-candidate-LOE
-       [:second-chance (average (length-of-employment (:second-chance-candidates criminal-histories)))]]
-    (max-key second no-criminal-history-LOE second-chance-candidate-LOE)))
+        second-chance-LOE
+        (->> (:second-chance-candidates criminal-histories)
+             (length-of-employment)
+             (average))]
+    {:average-LOE               average-LOE
+     :LOE-second-chance         second-chance-LOE
+     :LOE-no-criminal-history   no-criminal-history-LOE
+     :longest-tenure-on-average (if (< second-chance-LOE no-criminal-history-LOE)
+                                  "no criminal history"
+                                  "second-chance-candidates")
+     :difference-in-tenure      (if (< second-chance-LOE no-criminal-history-LOE)
+                                  (str (- no-criminal-history-LOE second-chance-LOE) " days")
+                                  (str (- second-chance-LOE no-criminal-history-LOE) " days"))}))
 
-(comment
-   (compare-LOE valid-hired-candidates))
 
 (defn quit-vs-fired [candidate-pool]
   (letfn [(terminated? [{:keys [terminated]}]
@@ -133,7 +109,19 @@
             (filter misconduct?)
             count)})))
 
-
 (comment
-  (quit-vs-fired hired-candidates-with-CH)
-  (quit-vs-fired valid-hired-candidates))
+
+  (defn columnizer [column-index] ; this was just some fun I was having with sorting the data by columns
+    (let [column
+          (mapv #(nth % column-index) data)
+
+          attribute
+          (keyword (first column))
+
+          values
+          (mapv str->int (rest column))]
+      (assoc {} attribute values)))
+
+  (def xf (map columnizer))
+  (def column-by-attribute
+    (transduce xf conj (range 10))))
