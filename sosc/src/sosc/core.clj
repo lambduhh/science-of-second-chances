@@ -152,10 +152,10 @@
                ave-loe)
 
           no-criminal-history-loe
-          (ave-loe (:no-criminal-history separated-gen-pop))
+          (ave-loe no-criminal-history)
 
           second-chance-loe
-          (ave-loe (:second-chance-candidates separated-gen-pop))]
+          (ave-loe second-chance-candidates)]
       {:average-loe               gen-pop-average-loe
        :second-chance-loe         second-chance-loe
        :no-criminal-history-loe   no-criminal-history-loe
@@ -194,7 +194,7 @@
 
 (defn render-compare-loe [{:keys [average-loe
                                   second-chance-loe
-                                  no-criminal-history-loe] :as data}]
+                                  no-criminal-history-loe]}]
   (let [longest-tenure-on-average
         (if (< second-chance-loe no-criminal-history-loe)
           "had no criminal history"
@@ -209,9 +209,12 @@
          " The difference is " diff-in-tenure)))
 
 ;TO-DO refactor
+; helper to transform data from int->bool augmenting data
+; filters terminated employees
+; aggregate
 (defn quit-vs-fired [candidate-pool]
-  (letfn [(terminated? [{:keys [terminated]}]
-            (= terminated 1))
+  (letfn [(terminated? [{:keys [terminated] :as candidate}] ;step fns (comp (map add-terminated) (map add-fired) (..)
+            (assoc candidate :terminated? (= terminated 1)))   ;               (filter :terminated?)
 
           (fired? [{:keys [involuntary-t]}]
             (= involuntary-t 1))
@@ -224,12 +227,12 @@
     (let [terminated-employees
           (filter terminated? candidate-pool)]
 
-      {:total-employees-terminated
-       (count terminated-employees)
+      {:total-employees-terminated ;monadic fn returns this hashmap
+       (count terminated-employees) ;diatic fn is conj
 
        :total-employees-who-quit
        (->> terminated-employees
-            (filter quit?)
+            (filter quit?) ; (filter :quit?)
             count)
 
        :total-fired-employees
@@ -241,6 +244,66 @@
        (->> terminated-employees
             (filter misconduct?)
             count)})))
+
+;;; start of the refactor
+
+
+(defn add-terminated [{:keys [terminated] :as candidate}]
+  (assoc candidate :terminated? (= terminated 1)))
+
+(defn add-fired [{:keys [involuntary-t] :as candidate}]
+  (assoc candidate :fired? (= involuntary-t 1)))
+
+(defn add-quit [{:keys [voluntary-t] :as candidate}]
+  (assoc candidate :quit? (= voluntary-t 1)))
+
+(defn add-misconduct [{:keys [misconduct] :as candidate}]
+  (assoc candidate :misconduct? (= misconduct 1)))
+
+;; could do something like ^^ but this is more slick
+;; all this is doing is converting all the 1 -> true bc booleans are easier to work with
+
+(defn int->bool [{:keys [terminated
+                         involuntary-t
+                         voluntary-t
+                         misconduct :as candidate]}]
+  (cond-> candidate
+    (= terminated 1) (assoc :terminated? true)
+    (= involuntary-t 1) (assoc :fired? true)
+    (= voluntary-t 1) (assoc :quit? true)
+    (= misconduct 1) (assoc :misconduct? true)))
+
+(def first-step (map int->bool valid-hired-candidates))
+(def second-step (filter :terminated? first-step))
+
+;first two step functions done, we compose these with comp, creating a function combinator= xff
+
+(def xff (comp
+          (map int->bool)
+          (filter terminated?)))
+
+; now to write the reducing fn for the transduce. i call it "the finisher" (yes mortal combat)
+
+(def fin (finisher {} second-step))
+
+(defn finisher [acc second-step] ;should be diatic fn
+  (reduce (fn [acc {:keys [fired?
+                          quit?
+                          misconduct?] :as candidate}]
+            (cond
+              quit? (update acc :total-quit conj candidate)
+              fired? (update acc :total-fired conj candidate)
+              misconduct? (update acc :fired-for-misconduct conj candidate)))
+          {:total-terminated (count second-step)
+           :total-quit []
+           :total-fired []
+           :fired-for-misconduct []}
+          second-step))
+
+(transduce xff finisher valid-hired-candidates) ; WHY is this not working? Grrr...
+
+
+; side-note... did you know conj can be a reducing function for transduce?
 
 (defn columnizer [column-index] ; this was just some fun I was having building transducers and sorting the data by columns
   (let [column
